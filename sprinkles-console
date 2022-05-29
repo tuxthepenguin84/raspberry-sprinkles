@@ -1,0 +1,19 @@
+#!/bin/bash
+## Append the following to your .bashrc on the pi account that automatically logs in
+RED_B='\e[1;91m'
+GREEN_B='\e[1;92m'
+YELLOW_B='\e[1;93m'
+BLUE_B='\e[1;94m'
+PURPLE_B='\e[1;95m'
+CYAN_B='\e[1;96m'
+WHITE_B='\e[1;97m'
+RESET='\e[0m'
+cyan() { echo -e "${CYAN_B}${1}${RESET}"; }
+while :
+do
+	tput cup 0 0
+	tput ed
+	cyan "$(figlet -f standard "sprinkles" )"
+	tail -n 33 /var/log/piwater/piwater.log
+	sleep 10
+done
