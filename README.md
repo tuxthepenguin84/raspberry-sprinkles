@@ -56,6 +56,8 @@ To have the sprinkles console run on the display and tail the log, add the conte
 ## Mobile/Remote
 If you want to control sprinkles remotely (iPhone/iPad for example) you can use something like Salt to configure Beacons/Reactors for activating the appropriate scripts. I use iOS  Shortcuts and "Run script over SSH" actions to send Beacons to my Salt master, which in turn activates Reactors on the RPI and activates sprinkles. Finally, if you have something like WireGuard you can then do this from anywhere.
 
+![sprinkles-ios](sprinkles-ios.png "sprinkles-ios")
+
 ## Future Functionality
 
 *   Rain Delay
