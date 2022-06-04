@@ -50,6 +50,13 @@ If you want to stop sprinkles while it is running, this will kill the python job
 /usr/bin/python /home/pi/scripts/deactivate.py
 ```
 
+## Rain Dely
+For every run it increments how many days to delay. For every schedule.py run it decrements a day.
+
+```bash
+/usr/bin/python /home/pi/scripts/raindelay.py
+```
+
 ## Sprinkles Console
 To have the sprinkles console run on the display and tail the log, add the contents of ```sprinkles-console``` to your .bashrc file, install ```figlet``` and use ```raspi-config``` to auto login the pi user account.
 
