@@ -1,7 +1,9 @@
 import argparse
 from datetime import datetime
 import logging
+import os
 import RPi.GPIO as GPIO
+import sys
 import threading
 import time
 
@@ -11,7 +13,7 @@ sprinklerDoWDict = {'front-bed': ['Mon', 'Wed', 'Fri', 'Sun'],
                     'front-lawn': ['Mon', 'Wed', 'Fri', 'Sun'],
                     'side-fence': ['Mon', 'Wed', 'Fri', 'Sun'],
                     'back-fence': ['Mon', 'Wed', 'Fri', 'Sun'],
-                    'back-garden': ['Mon', 'Wed', 'Fri', 'Sun']}
+                    'back-garden': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']}
 
 # Watering Time (min)
 sprinklerMinDict = {'front-bed': 6,
@@ -20,7 +22,19 @@ sprinklerMinDict = {'front-bed': 6,
                     'back-fence': 8,
                     'back-garden': 30}
 
-################################################################
+# Sprinkler Name
+sprinklerNameDict = {'front-bed': 'Front Bed  ',
+                    'front-lawn': 'Front Lawn ',
+                    'side-fence': 'Side Fence ',
+                    'back-fence': 'Back Fence ',
+                    'back-garden': 'Back Garden'}
+
+# GPIO BMC Pin
+sprinklerGPIO    = {'front-bed': 5,      # Grey Green
+                    'front-lawn': 6,     # Grey Red
+                    'side-fence': 13,    # Grey Blue
+                    'back-fence': 16,    # Brown Red
+                    'back-garden': 19}   # Brown Blue
 
 # CLI Arguments
 parser = argparse.ArgumentParser(description="PiWater Schedule Run")
@@ -30,28 +44,36 @@ args = parser.parse_args()
 # Logging Config
 logging.basicConfig(format='%(message)s', filename='/var/log/piwater/piwater.log', encoding='utf-8', level=logging.INFO)
 
-# Sprinkler Name
-sprinklerNameDict = {'front-bed': 'Front Bed  ',    # Grey Green
-                    'front-lawn': 'Front Lawn ',    # Grey Red
-                    'side-fence': 'Side Fence ',    # Grey Blue
-                    'back-fence': 'Back Fence ',    # Brown Red
-                    'back-garden': 'Back Garden'}   # Brown Blue
-
-# GPIO BMC Pin
-sprinklerGPIO    = {'front-bed': 5,       # Front Bed
-                    'front-lawn': 6,      # Front Lawn
-                    'side-fence': 13,     # Side Fence
-                    'back-fence': 16,     # Back Fence
-                    'back-garden': 19}    # Back Garden
-
 # Begin
 stringTime = "%a %m/%d %H:%M"
 DoW = datetime.now().strftime("%a")
+rainExit = False
 
+# Check if scheduled to run based on DoW
 if DoW not in [x for v in sprinklerDoWDict.values() for x in v] and args.force == False:
     exit()
 
-# Begin
+# Check for raindelay
+try:
+    f = open("/home/pi/scripts/raindelay", "r")
+    currentDelay = int(f.read())
+    f.close()
+    logging.info ('')
+    logging.info ('%s | RAIN DELAY SKIPPING for %s day(s)', datetime.now().strftime(stringTime), currentDelay)
+    if isinstance(currentDelay, int) and currentDelay > 1:
+        currentDelay = currentDelay - 1
+        f = open("/home/pi/scripts/raindelay", "w")
+        f.write(str(currentDelay))
+        f.close()
+    elif isinstance(currentDelay, int) and currentDelay == 1:
+        os.remove("/home/pi/scripts/raindelay")
+    rainExit = True
+except:
+    pass
+
+if rainExit:
+    sys.exit()
+
 logging.info ('')
 logging.info ('%s | WATERING SCHEDULE STARTED', datetime.now().strftime(stringTime))
 

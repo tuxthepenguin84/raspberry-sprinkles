@@ -38,6 +38,3 @@ GPIO.cleanup()
 
 # Kill python processes
 os.system("/usr/bin/killall python")
-
-# Always delay for a few seconds to reduce flapping
-time.sleep(1)
