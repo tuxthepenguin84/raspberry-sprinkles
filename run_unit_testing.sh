@@ -1,4 +1,4 @@
 #!/bin/bash
 trap "kill 0" EXIT
-python rsapi.py & sleep 1 &&
-python test_rsapi.py
+python3 rsapi.py & sleep 1 &&
+python3 test_rsapi.py
