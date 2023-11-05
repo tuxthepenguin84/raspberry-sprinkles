@@ -1,7 +1,5 @@
 import requests
 
-daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-
 def getAllSprinklers(baseURL):
   return requests.get(baseURL + 'sprinklergetall')
 
@@ -40,8 +38,8 @@ def getSchedule(baseUrl, scheduleID):
   return requests.get(baseUrl + 'schedulebuilder/' + str(scheduleID))
 
 def addSchedule(baseURL, sprinklerID, DoW, startTime, runTime):
-  if DoW == 'Everyday':
-    for day in daysOfWeek:
+  if type(DoW) is list:
+    for day in DoW:
       addSchedule(baseURL, sprinklerID, day, startTime, runTime)
   else:
     addScheduleData = {
@@ -53,8 +51,8 @@ def addSchedule(baseURL, sprinklerID, DoW, startTime, runTime):
     return requests.put(baseURL + 'schedulebuilder/' + str(getScheduleID(baseURL)), addScheduleData)
 
 def updateSchedule(baseURL, scheduleID, DoW, startTime, runTime):
-  if DoW == 'Everyday':
-    for day in daysOfWeek:
+  if type(DoW) is list:
+    for day in DoW:
       updateSchedule(baseURL, scheduleID, day, startTime, runTime)
   else:
     updatedScheduleData = {
