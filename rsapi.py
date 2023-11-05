@@ -18,8 +18,12 @@ import threading
 import time
 
 # Custom Modules
-sys.path.append('/home/pi/git/matrix')
-from matrixmessage import sendMatrixMessage
+try:
+  sys.path.append('/home/pi/git/matrix')
+  from matrixmessage import sendMatrixMessage
+  messagingEnabled = True
+except (RuntimeError, ModuleNotFoundError):
+  messagingEnabled = False
 
 # GPIO Functions
 def customGPIOMapping(totalChannels, channel):
@@ -36,11 +40,11 @@ def customGPIOMapping(totalChannels, channel):
                   8: 26}  # Blank
 
   if totalChannels == 8:
-      return eightChannel[channel]
+    return eightChannel[int(channel)]
   elif totalChannels == 3:
-      return threeChannel[channel]
+    return threeChannel[int(channel)]
   else:
-      return None
+    return None
 
 # Check Functions
 def checkExistingSprinklerID(sprinklerID, scheduleJSON):
@@ -64,7 +68,7 @@ def checkNotExistingSchedule(newScheduleData, scheduleID, scheduleJSON):
 
 def checkRunningSprinklers(sprinklingInProgress):
   if sprinklingInProgress:
-      abort(409, message='Sprinklers currently running, try again')
+    abort(409, message='Sprinklers currently running, try again')
 
 # Sprinkler Functions
 def runSprinkler(gpioPIN, sprinklerRuntime, sprinklerName):
@@ -74,17 +78,17 @@ def runSprinkler(gpioPIN, sprinklerRuntime, sprinklerName):
   sprinklingInProgress = True
   pushMessage = f'START | {sprinklerName} | {sprinklerRuntime} minutes'
   raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-  if unitTestingMode == False and runningOnPi:
-    sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
-    GPIO.output(gpioPIN, True)
+  if unitTestingMode == False:
+    if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
+    if runningOnPi: GPIO.output(gpioPIN, True)
   now = datetime.now()
-  while (now + timedelta(minutes=int(sprinklerRuntime))) > datetime.now() and stopRunningRequest == False and unitTestingMode == False:
+  while (now + timedelta(minutes=sprinklerRuntime)) > datetime.now() and stopRunningRequest == False and unitTestingMode == False:
     time.sleep(0.1)
   pushMessage = f'STOP  | {sprinklerName} | {sprinklerRuntime} minutes'
   raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-  if unitTestingMode == False and runningOnPi:
-    sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
-    GPIO.output(gpioPIN, False)
+  if unitTestingMode == False:
+    if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
+    if runningOnPi: GPIO.output(gpioPIN, False)
 
 def sprinklerStats():
   scheduleJSON = importSchedule(scheduleFile)
@@ -92,7 +96,7 @@ def sprinklerStats():
     weeklyRuntime = 0
     for scheduleID in scheduleJSON['schedules']:
       if scheduleJSON['schedules'][scheduleID]['sprinklerid'] == sprinklerID:
-        weeklyRuntime += int(scheduleJSON['schedules'][scheduleID]['runtime'])
+        weeklyRuntime += scheduleJSON['schedules'][scheduleID]['runtime']
     scheduleJSON['sprinklers'][sprinklerID]['weeklyruntime'] = weeklyRuntime
     scheduleJSON['sprinklers'][sprinklerID]['weeklygals'] = weeklyRuntime * scheduleJSON['sprinklers'][sprinklerID]['gallonspermin']
     writeScheduleJSON(scheduleJSON, scheduleFile)
@@ -100,15 +104,17 @@ def sprinklerStats():
 # Schedule Functions
 def importSchedule(scheduleFile):
   if Path(scheduleFile).is_file():
-      scheduleJSON = None
-      while scheduleJSON == None:
-        try:
-          scheduleJSON = json.load(open(Path(scheduleFile)))
-        except json.decoder.JSONDecodeError:
-          time.sleep(0.1)
-      return scheduleJSON
+    retries = 5
+    scheduleJSON = None
+    while scheduleJSON == None and retries > 0:
+      try:
+        scheduleJSON = json.load(open(Path(scheduleFile)))
+      except json.decoder.JSONDecodeError:
+        retries -= 1
+        time.sleep(0.1)
+    return scheduleJSON
   else:
-      return resetSchedule()
+    return resetSchedule()
 
 def resetSchedule():
   scheduleJSON = {# move this to default.json
@@ -296,8 +302,8 @@ class RunAdhoc(Resource):
       raspiLog.info ('')
       pushMessage = f'ADHOC WATERING REQUEST STARTED'
       raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-      if unitTestingMode == False and runningOnPi:
-        #sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
+      if unitTestingMode == False:
+        #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
         pass
       adhocSprinklerThread = sprinklerThread(sprinklerID, sprinklerInfo['sprinklername'], runAdhocPutArgs.parse_args()['runtime'])
       adhocSprinklerThread.start()
@@ -325,19 +331,19 @@ class RunSchedule(Resource):
     raspiLog.info ('')
     pushMessage = f'SCHEDULED WATERING REQUEST STARTED'
     raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-    if unitTestingMode == False and runningOnPi:
-      #sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
+    if unitTestingMode == False:
+      #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
       pass
     if scheduleJSON['raindelay']['enddate'] != None and datetime.now() < datetime.strptime(scheduleJSON['raindelay']['enddate'], "%a %m/%d/%y %H:%M"):
       pushMessage = f'RAIN DELAY UNTIL {scheduleJSON["raindelay"]["enddate"]}'
       raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-      if unitTestingMode == False and runningOnPi:
-        #sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
+      if unitTestingMode == False:
+        #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
         pass
       pushMessage = f'SCHEDULED WATERING REQUEST DELAYED'
       raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-      if unitTestingMode == False and runningOnPi:
-        #sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
+      if unitTestingMode == False:
+        #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
         pass
       return '', 202
     sprinklerIDs = []
@@ -366,8 +372,8 @@ class StopRunning(Resource):
     stopRunningRequest = True
     pushMessage = f'INTERRUPTING'
     raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-    if unitTestingMode == False and runningOnPi:
-      sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
+    if unitTestingMode == False:
+      if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
     return '', 200
 
 class Config(Resource):
@@ -391,7 +397,7 @@ class Status(Resource):
 
 class Metrics(Resource):
   def get(self):
-    scheduleJSON = importSchedule(scheduleFile)
+    #scheduleJSON = importSchedule(scheduleFile)
     return 'Coming soon', 200
 
 class UnitTesting(Resource):
@@ -419,7 +425,7 @@ class UnitTesting(Resource):
 class sprinklerThread (threading.Thread):
   def __init__(self, sprinklerID, sprinklerName, runTime):
     threading.Thread.__init__(self)
-    self.GPIO = customGPIOMapping(parsedArgs.channels, int(sprinklerID))
+    self.GPIO = customGPIOMapping(parsedArgs.channels, sprinklerID)
     self.sprinklerRuntime = runTime
     self.sprinklerName = sprinklerName
   def run(self):
@@ -448,8 +454,8 @@ class monitorThread (threading.Thread):
         writeScheduleJSON(scheduleJSON, scheduleFile)
     pushMessage = f'{self.sprinklerRequestType} WATERING REQUEST COMPLETED'
     raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-    if unitTestingMode == False and runningOnPi:
-      #sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
+    if unitTestingMode == False:
+      #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
       pass
     sprinklingInProgress = False
 
@@ -469,7 +475,7 @@ if __name__ == "__main__":
   argParser.add_argument("-c", "--channels", type=int, help="Number of channels on the relay", default=8)
   argParser.add_argument("-f", "--flog", help="Path to Flask log file", default='/var/log/rs/flask.log')
   argParser.add_argument("-l", "--rslog", help="Path to Raspberry Sprinkles log file", default='/var/log/rs/raspberry-sprinkles.log')
-  argParser.add_argument("-s", "--schedule", help="schedule file", default='/home/pi/git/raspberry-sprinkles/schedule.json')
+  argParser.add_argument("-s", "--schedule", help="Path to schedule file (json)", default='/home/pi/git/raspberry-sprinkles/schedule.json')
   parsedArgs = argParser.parse_args()
   originalScheduleFile = scheduleFile = parsedArgs.schedule
 
@@ -484,13 +490,13 @@ if __name__ == "__main__":
   schedulePutArgs.add_argument('sprinklerid', type=str, help="Name of sprinkler", location='form', required=True)
   schedulePutArgs.add_argument('dow', type=str, help="Day of Week to run sprinkler", location='form', required=True)
   schedulePutArgs.add_argument('starttime', type=str, help="Time of day to start sprinkler", location='form', required=True)
-  schedulePutArgs.add_argument('runtime', type=str, help="Runtime of sprinklers", location='form', required=True)
+  schedulePutArgs.add_argument('runtime', type=int, help="Runtime of sprinkler", location='form', required=True)
   schedulePatchArgs = reqparse.RequestParser()
-  schedulePatchArgs.add_argument('dow', help="Day of Week to run sprinkler", location='form')
-  schedulePatchArgs.add_argument('starttime', help="Time of day to start sprinkler", location='form')
-  schedulePatchArgs.add_argument('runtime', help="Runtime of sprinklers", location='form')
+  schedulePatchArgs.add_argument('dow', type=str, help="Day of Week to run sprinkler", location='form')
+  schedulePatchArgs.add_argument('starttime', type=str, help="Time of day to start sprinkler", location='form')
+  schedulePatchArgs.add_argument('runtime', type=int, help="Runtime of sprinkler", location='form')
   runAdhocPutArgs = reqparse.RequestParser()
-  runAdhocPutArgs.add_argument('runtime', type=str, help="Runtime of sprinklers", location='form', required=True)
+  runAdhocPutArgs.add_argument('runtime', type=int, help="Runtime of sprinkler", location='form', required=True)
   runSchedulePutArgs = reqparse.RequestParser()
   runSchedulePutArgs.add_argument('scheduleids', action='append', help="Sprinkler IDs", location='form', required=True)
   unitTestingPutArgs = reqparse.RequestParser()
