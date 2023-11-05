@@ -29,8 +29,10 @@ I have a RainBird sprinkler system but this should work with any other system. I
 
 ## Installation
 Assuming the current path is ```/home/pi/git```
+1. Python 3 (tested with version 3.10)
 1. ```git clone https://github.com/tuxthepenguin84/raspberry-sprinkles.git```
 1. ```pip install -r requirements.txt```
+1. ```sudo mkdir /var/log/rs && chown -R pi:pi /var/log/rs```
 
 ## systemd
 If you want to install Raspberry-Sprinkles as a service, copy the systemd service files to ```/lib/systemd/system/``` dir and reload systemd. Enable the service to start on boot.
@@ -61,6 +63,7 @@ If you want the console output similar to the main picture in this repo you'll n
 * test_rsapi.py - Unit testing for Raspberry-Sprinkles
 * run_unit_testing.sh - Used to call test_rsapi.py for unit testing
 * requirements.txt - Python requirements for Raspberry-Sprinkles
+* weather_params.json - Used for issuing rain delays automatically based on weather and location information
 
 # Running Raspberry-Sprinkles
 ## Build A Sprinkler Schedule
@@ -73,11 +76,11 @@ Raspberry-Sprinkles can build any type of schedule you require for your sprinkle
 1. The rsapi service will automatically pickup the schedule.json and run at the requested times.
 * There is a known bug where if one sprinkler is stopping in the same minute as another sprinkler is starting it will not start the sprinkler. As a result do not have any sprinklers end the same minute another sprinkler is starting.
 
-## Manually Run Sprinkler Schedule Adhoc
+## Run Sprinkler Schedule
 Run schedule ID 1,5,9,13,17<br>
 ```curl -s -X PUT http://127.0.0.1:5000/runschedule -d scheduleids=1,5,9,13,17```
 
-## Manually Run Sprinkler Adhoc
+## Run Sprinkler
 Run sprinkler 1 for 10 minutes<br>
 ```curl -s -X PUT http://127.0.0.1:5000/runadhoc/1 -d runtime=10```
 
@@ -85,7 +88,7 @@ Run sprinkler 1 for 10 minutes<br>
 ```curl -s -X DELETE http://127.0.0.1:5000/stoprunning```
 
 ## Rain Delay
-Every time this is run, one day is added to the rain delay<br>
+Adds a rain delay for 24 hours (Increments by 24 hours on each run)<br>
 ```curl -s -X PATCH http://127.0.0.1:5000/raindelay```
 
 View current rain delay<br>
@@ -94,7 +97,7 @@ View current rain delay<br>
 Remove rain delay<br>
 ```curl -s -X DELETE http://127.0.0.1:5000/raindelay```
 
-## Reset Schedule
+## Reset Sprinkler Schedule
 ```curl -s -X DELETE http://127.0.0.1:5000/resetall```
 
 ## Raspberry-Sprinkles Front End (UI)
@@ -110,5 +113,5 @@ There is no https support. However, I recommend and use Nginx Proxy Manager whic
 
 - ✅ | Add API Functionality
 - ✅ | Support multiple schedules based on season
-- ⬜️ | Weather integration for automated schedule adjustment
+- ✅ | Weather integration for automated schedule adjustment - https://open-meteo.com/
 - ⬜️ | Add API Key Auth: https://blog.teclado.com/api-key-authentication-with-flask/
