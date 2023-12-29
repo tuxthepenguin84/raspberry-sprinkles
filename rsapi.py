@@ -331,20 +331,13 @@ class RunSchedule(Resource):
     raspiLog.info ('')
     pushMessage = f'SCHEDULED WATERING REQUEST STARTED'
     raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-    if unitTestingMode == False:
-      #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
-      pass
     if scheduleJSON['raindelay']['enddate'] != None and datetime.now() < datetime.strptime(scheduleJSON['raindelay']['enddate'], "%a %m/%d/%y %H:%M"):
       pushMessage = f'RAIN DELAY UNTIL {scheduleJSON["raindelay"]["enddate"]}'
       raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-      if unitTestingMode == False:
-        #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
-        pass
+      if unitTestingMode == False and messagingEnabled:
+        sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
       pushMessage = f'SCHEDULED WATERING REQUEST DELAYED'
       raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-      if unitTestingMode == False:
-        #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
-        pass
       return '', 202
     sprinklerIDs = []
     for scheduleID in scheduleIDs:
@@ -454,9 +447,6 @@ class monitorThread (threading.Thread):
         writeScheduleJSON(scheduleJSON, scheduleFile)
     pushMessage = f'{self.sprinklerRequestType} WATERING REQUEST COMPLETED'
     raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-    if unitTestingMode == False:
-      #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, token, True, messageTimeout)
-      pass
     sprinklingInProgress = False
 
 if __name__ == "__main__":
