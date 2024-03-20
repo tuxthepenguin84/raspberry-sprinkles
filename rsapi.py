@@ -79,7 +79,7 @@ def runSprinkler(gpioPIN, sprinklerRuntime, sprinklerName):
   pushMessage = f'START | {sprinklerName} | {sprinklerRuntime} minutes'
   raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
   if unitTestingMode == False:
-    if messagingEnabled: sendMatrixMessage(pushMessage, roomID, messageTimeout, True, token)
+    if messagingEnabled: sendMatrixMessage(pushMessage, roomid, timeout, True, token)
     if runningOnPi: GPIO.output(gpioPIN, True)
   now = datetime.now()
   while (now + timedelta(minutes=sprinklerRuntime)) > datetime.now() and stopRunningRequest == False and unitTestingMode == False:
@@ -87,7 +87,7 @@ def runSprinkler(gpioPIN, sprinklerRuntime, sprinklerName):
   pushMessage = f'STOP  | {sprinklerName} | {sprinklerRuntime} minutes'
   raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
   if unitTestingMode == False:
-    if messagingEnabled: sendMatrixMessage(pushMessage, roomID, messageTimeout, True, token)
+    if messagingEnabled: sendMatrixMessage(pushMessage, roomid, timeout, True, token)
     if runningOnPi: GPIO.output(gpioPIN, False)
 
 def sprinklerStats():
@@ -303,7 +303,7 @@ class RunAdhoc(Resource):
       pushMessage = f'ADHOC WATERING REQUEST STARTED'
       raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
       if unitTestingMode == False:
-        #if messagingEnabled: sendMatrixMessage(pushMessage, roomID, messageTimeout, True, token)
+        #if messagingEnabled: sendMatrixMessage(pushMessage, roomid, timeout, True, token)
         pass
       adhocSprinklerThread = sprinklerThread(sprinklerID, sprinklerInfo['sprinklername'], runAdhocPutArgs.parse_args()['runtime'])
       adhocSprinklerThread.start()
@@ -335,7 +335,7 @@ class RunSchedule(Resource):
       pushMessage = f'RAIN DELAY UNTIL {scheduleJSON["raindelay"]["enddate"]}'
       raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
       if unitTestingMode == False and messagingEnabled:
-        sendMatrixMessage(pushMessage, roomID, messageTimeout, True, token)
+        sendMatrixMessage(pushMessage, roomid, timeout, True, token)
       pushMessage = f'SCHEDULED WATERING REQUEST DELAYED'
       raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
       return '', 202
@@ -366,7 +366,7 @@ class StopRunning(Resource):
     pushMessage = f'INTERRUPTING'
     raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
     if unitTestingMode == False:
-      if messagingEnabled: sendMatrixMessage(pushMessage, roomID, messageTimeout, True, token)
+      if messagingEnabled: sendMatrixMessage(pushMessage, roomid, timeout, True, token)
     return '', 200
 
 class Config(Resource):
@@ -456,8 +456,8 @@ if __name__ == "__main__":
   unitTestingMode = False
 
   # Matrix Variables
-  messageTimeout = 10
-  roomID = '!IwbJqjlrJYdTAmYMTh:matrix.delchamps.io'
+  timeout = 10
+  roomid = '!IwbJqjlrJYdTAmYMTh:matrix.delchamps.io'
   token = 'syt_bm90aWZpZXI_KQflmLjKwCDbKYjMzwRH_4BwUMB'
 
   # Arg Parser
