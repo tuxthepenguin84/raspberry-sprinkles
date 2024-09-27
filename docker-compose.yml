@@ -1,0 +1,33 @@
+services:
+  sprinklesapi:
+    image: sprinkles/sprinklesapi:latest
+    container_name: sprinklesapi
+    privileged: true
+    restart: unless-stopped
+    networks:
+      - proxy
+    #ports:
+    #  - 5000:5000/tcp
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /home/pi/git/raspberry-sprinkles/schedule.json:/git/sprinkles/schedule.json
+
+  sprinklesscheduler:
+    image: sprinkles/sprinklesscheduler:latest
+    container_name: sprinklesscheduler
+    restart: unless-stopped
+    networks:
+      - proxy
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /home/pi/git/raspberry-sprinkles/schedule.json:/git/sprinkles/schedule.json
+    depends_on:
+      sprinklesapi:
+        condition: service_healthy
+
+networks:
+  proxy:
+    driver: overlay
+    external: true

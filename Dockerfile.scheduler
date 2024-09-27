@@ -1,0 +1,19 @@
+FROM ubuntu:jammy
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  apt-transport-https \
+  build-essential \
+  ca-certificates \
+  curl \
+  git \
+  python3 \
+  python3-requests \
+  python3-requests-cache \
+  python3-schedule \
+  && update-ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && mkdir -p /git/delchamps /git/sprinkles
+ARG CACHEBUST=1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --start-interval=5s --retries=3 \
+  CMD ps aux | grep '[r]sscheduler.py' || exit 1
+ENTRYPOINT ["/usr/bin/python3", "-u", "/git/sprinkles/rsscheduler.py"]

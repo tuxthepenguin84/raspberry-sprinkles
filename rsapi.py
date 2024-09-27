@@ -1,554 +1,594 @@
 # Modules
-import argparse
 from datetime import datetime, timedelta
 from flask import Flask
 from flask_cors import CORS
 from flask_restful import abort, Api, reqparse, Resource
-try:
-  import RPi.GPIO as GPIO
-  runningOnPi = True
-except (RuntimeError, ModuleNotFoundError):
-  runningOnPi = False
 import json
-import logging
 import os
-from pathlib import Path
+import RPi.GPIO as gpio
 import sys
 import threading
 import time
 
-# Custom Modules
-try:
-  sys.path.append('/home/pi/git/matrix')
-  from matrixmessage import sendMatrixMessage
-  messagingEnabled = True
-except (RuntimeError, ModuleNotFoundError):
-  messagingEnabled = False
+# Import raspberry-sprinkles Modules
+import rsclient as rsc
+
+# Functions
+def message_out(message):
+  if unit_testing_mode == False and matrix_enabled:
+    dmessage.send_matrix_message(message, matrix_room_id, matrix_token)
+  message = f'{datetime.now().strftime(time_format_dow_mon_day_hour_min)} | {message}'
+  print(message)
 
 # GPIO Functions
-def customGPIOMapping(totalChannels, channel):
-  threeChannel = {1: 26,
-                  2: 20,
-                  3: 21}
-  eightChannel = {1: 5,   # Grey Green
-                  2: 6,   # Grey Red
-                  3: 13,  # Grey Blue
-                  4: 16,  # Brown Red
-                  5: 19,  # Brown Blue
-                  6: 20,  # Blank
-                  7: 21,  # Blank
-                  8: 26}  # Blank
+def gpio_mapping(total_channels, channel):
+  three_channel = {
+    1: 26,
+    2: 20,
+    3: 21
+  }
+  eight_channel = {
+    1: 5,   # Grey Green
+    2: 6,   # Grey Red
+    3: 13,  # Grey Blue
+    4: 16,  # Brown Red
+    5: 19,  # Brown Blue
+    6: 20,  # Blank - Used for Testing
+    7: 21,  # Blank
+    8: 26   # Blank
+  }
 
-  if totalChannels == 8:
-    return eightChannel[int(channel)]
-  elif totalChannels == 3:
-    return threeChannel[int(channel)]
+  if total_channels == 8:
+    return eight_channel[int(channel)]
+  elif total_channels == 3:
+    return three_channel[int(channel)]
   else:
     return None
 
 # Check Functions
-def checkExistingSprinklerID(sprinklerID, scheduleJSON):
-  if sprinklerID not in scheduleJSON['sprinklers']:
-    abort(404, message='Could not find sprinklerID')
+def check_existing_sprinkler_id(sprinkler_id, schedule_json):
+  if sprinkler_id not in schedule_json['sprinklers']:
+    abort(404, message='Could not find sprinkler_id')
 
-def checkNotExistingSprinklerID(sprinklerID, scheduleJSON):
-  if sprinklerID in scheduleJSON['sprinklers']:
-    abort(409, message='sprinklerID already exists')
+def check_not_existing_sprinkler_id(sprinkler_id, schedule_json):
+  if sprinkler_id in schedule_json['sprinklers']:
+    abort(409, message='sprinkler_id already exists')
 
-def checkExistingScheduleID(scheduleID, scheduleJSON):
-  if scheduleID not in scheduleJSON['schedules']:
-    abort(404, message='Could not find scheduleID')
+def check_existing_schedule_id(schedule_id, schedule_json):
+  if schedule_id not in schedule_json['schedules']:
+    abort(404, message='Could not find schedule_id')
 
-def checkNotExistingSchedule(newScheduleData, scheduleID, scheduleJSON):
-  if scheduleID in scheduleJSON['schedules']:
-    abort(409, message='scheduleID already exists')
-  for schedule in scheduleJSON['schedules']:
-    if newScheduleData['sprinklerid'] == scheduleJSON['schedules'][schedule]['sprinklerid'] and newScheduleData['dow'] == scheduleJSON['schedules'][schedule]['dow'] and newScheduleData['starttime'] == scheduleJSON['schedules'][schedule]['starttime'] and newScheduleData['runtime'] == scheduleJSON['schedules'][schedule]['runtime']:
+def check_not_existing_schedule(new_schedule_data, schedule_id, schedule_json):
+  if schedule_id in schedule_json['schedules']:
+    abort(409, message='schedule_id already exists')
+  for schedule in schedule_json['schedules']:
+    if new_schedule_data['sprinklerid'] == schedule_json['schedules'][schedule]['sprinklerid'] and new_schedule_data['dow'] == schedule_json['schedules'][schedule]['dow'] and new_schedule_data['starttime'] == schedule_json['schedules'][schedule]['starttime'] and new_schedule_data['runtime'] == schedule_json['schedules'][schedule]['runtime']:
       abort(409, message='schedule already exists')
 
-def checkRunningSprinklers(sprinklingInProgress):
-  if sprinklingInProgress:
+def check_running_sprinklers(sprinkle_in_progress):
+  if sprinkle_in_progress:
     abort(409, message='Sprinklers currently running, try again')
 
 # Sprinkler Functions
-def runSprinkler(gpioPIN, sprinklerRuntime, sprinklerName):
-  global stopRunningRequest
-  global sprinklingInProgress
-  stopRunningRequest = False
-  sprinklingInProgress = True
-  pushMessage = f'START | {sprinklerName} | {sprinklerRuntime} minutes'
-  raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-  if unitTestingMode == False:
-    if messagingEnabled: sendMatrixMessage(pushMessage, roomid, timeout, True, token)
-    if runningOnPi: GPIO.output(gpioPIN, True)
-  now = datetime.now()
-  while (now + timedelta(minutes=sprinklerRuntime)) > datetime.now() and stopRunningRequest == False and unitTestingMode == False:
-    time.sleep(0.1)
-  pushMessage = f'STOP  | {sprinklerName} | {sprinklerRuntime} minutes'
-  raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-  if unitTestingMode == False:
-    if messagingEnabled: sendMatrixMessage(pushMessage, roomid, timeout, True, token)
-    if runningOnPi: GPIO.output(gpioPIN, False)
+def run_sprinkler(gpio_pin, sprinkler_runtime, sprinkler_name):
+  global stop_running_request
+  global sprinkle_in_progress
+  stop_running_request = False
+  sprinkle_in_progress = True
+  if unit_testing_mode == False:
+    gpio.output(gpio_pin, True)
+    message = f'START | {sprinkler_name} | {sprinkler_runtime} minutes'
+    message_out(message)
+    if db_enabled:
+      db_values = (
+        datetime.now().strftime(date_format_mon_day_year),
+        datetime.now().strftime(time_format_hour_min_sec),
+        sprinkler_name,
+        'start',
+        sprinkler_runtime
+      )
+      ddatabase.insert_into_db(db_connection_info, db_table, db_columns, db_values)
 
-def sprinklerStats():
-  scheduleJSON = importSchedule(scheduleFile)
-  for sprinklerID in scheduleJSON['sprinklers']:
-    weeklyRuntime = 0
-    for scheduleID in scheduleJSON['schedules']:
-      if scheduleJSON['schedules'][scheduleID]['sprinklerid'] == sprinklerID:
-        weeklyRuntime += scheduleJSON['schedules'][scheduleID]['runtime']
-    scheduleJSON['sprinklers'][sprinklerID]['weeklyruntime'] = weeklyRuntime
-    scheduleJSON['sprinklers'][sprinklerID]['weeklygals'] = weeklyRuntime * scheduleJSON['sprinklers'][sprinklerID]['gallonspermin']
-    writeScheduleJSON(scheduleJSON, scheduleFile)
+    endTime = datetime.now() + timedelta(minutes=sprinkler_runtime)
+    while endTime > datetime.now() and stop_running_request == False:
+      time.sleep(1)
 
-# Schedule Functions
-def importSchedule(scheduleFile):
-  if Path(scheduleFile).is_file():
-    retries = 5
-    scheduleJSON = None
-    while scheduleJSON == None and retries > 0:
-      try:
-        scheduleJSON = json.load(open(Path(scheduleFile)))
-      except json.decoder.JSONDecodeError:
-        retries -= 1
-        time.sleep(0.1)
-    return scheduleJSON
-  else:
-    return resetSchedule()
+    gpio.output(gpio_pin, False)
+    message = f'STOP  | {sprinkler_name} | {sprinkler_runtime} minutes'
+    message_out(message)
+    if db_enabled:
+      db_values = (
+        datetime.now().strftime(date_format_mon_day_year),
+        datetime.now().strftime(time_format_hour_min_sec),
+        sprinkler_name,
+        'stop',
+        sprinkler_runtime
+      )
+      ddatabase.insert_into_db(db_connection_info, db_table, db_columns, db_values)
 
-def resetSchedule():
-  scheduleJSON = {# move this to default.json
-                    "created": datetime.now().strftime("%a %m/%d %H:%M"),
-                    "edited": datetime.now().strftime("%a %m/%d %H:%M"),
-                    "raindelay":{
-                      "startdate": None,
-                      "enddate": None
-                    },
-                    "sprinklers":{
-
-                    },
-                    "schedules_edited": datetime.now().strftime("%a %m/%d %H:%M"),
-                    "schedules":{
-
-                    }
-                  }
-  return scheduleJSON
-
-def writeScheduleJSON(scheduleJSON, scheduleFile):
-  scheduleJSON['edited'] = datetime.now().strftime("%a %m/%d %H:%M")
-  f = open(scheduleFile,"w")
-  f.write(json.dumps(scheduleJSON, indent=2))
-  f.close()
+def sprinkler_stats():
+  schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+  for sprinkler_id in schedule_json['sprinklers']:
+    weekly_runtime = 0
+    for schedule_id in schedule_json['schedules']:
+      if schedule_json['schedules'][schedule_id]['sprinklerid'] == sprinkler_id:
+        weekly_runtime += schedule_json['schedules'][schedule_id]['runtime']
+    schedule_json['sprinklers'][sprinkler_id]['weeklyruntime'] = weekly_runtime
+    schedule_json['sprinklers'][sprinkler_id]['weeklygals'] = weekly_runtime * schedule_json['sprinklers'][sprinkler_id]['gallonspermin']
+    rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
 
 # Classes
 class SprinklerBuilder(Resource):
-  def get(self, sprinklerID):
-    scheduleJSON = importSchedule(scheduleFile)
-    checkExistingSprinklerID(sprinklerID, scheduleJSON)
-    return scheduleJSON['sprinklers'][sprinklerID], 200
+  def get(self, sprinkler_id):
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    check_existing_sprinkler_id(sprinkler_id, schedule_json)
+    return schedule_json['sprinklers'][sprinkler_id], 200
 
-  def put(self, sprinklerID):
-    scheduleJSON = importSchedule(scheduleFile)
-    checkNotExistingSprinklerID(sprinklerID, scheduleJSON)
-    scheduleJSON['sprinklers'][sprinklerID] = sprinklerPutArgs.parse_args()
-    if sprinklerPutArgs.parse_args()['gallonspermin'] == None:
-      scheduleJSON['sprinklers'][sprinklerID]['gallonspermin'] = 0
-    scheduleJSON['sprinklers'][sprinklerID]['inprogress'] = False
-    scheduleJSON['sprinklers'][sprinklerID]['lastrequest'] = None
-    scheduleJSON['sprinklers'][sprinklerID]['lastrun'] = None
-    scheduleJSON['sprinklers'][sprinklerID]['weeklyruntime'] = 0
-    scheduleJSON['sprinklers'][sprinklerID]['weeklygals'] = 0
-    writeScheduleJSON(scheduleJSON, scheduleFile)
-    return scheduleJSON['sprinklers'][sprinklerID], 201
+  def put(self, sprinkler_id):
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    check_not_existing_sprinkler_id(sprinkler_id, schedule_json)
+    schedule_json['sprinklers'][sprinkler_id] = sprinkler_put_args.parse_args()
+    if sprinkler_put_args.parse_args()['gallonspermin'] == None:
+      schedule_json['sprinklers'][sprinkler_id]['gallonspermin'] = 0
+    schedule_json['sprinklers'][sprinkler_id]['history'] = []
+    schedule_json['sprinklers'][sprinkler_id]['inprogress'] = False
+    schedule_json['sprinklers'][sprinkler_id]['lastrequest'] = None
+    schedule_json['sprinklers'][sprinkler_id]['lastrun'] = None
+    schedule_json['sprinklers'][sprinkler_id]['weeklyruntime'] = 0
+    schedule_json['sprinklers'][sprinkler_id]['weeklygals'] = 0
+    rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+    return schedule_json['sprinklers'][sprinkler_id], 201
 
-  def patch(self, sprinklerID):
-    scheduleJSON = importSchedule(scheduleFile)
-    checkExistingSprinklerID(sprinklerID, scheduleJSON)
-    sprinklersChanged = False
+  def patch(self, sprinkler_id):
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    check_existing_sprinkler_id(sprinkler_id, schedule_json)
+    sprinklers_changed = False
     ### CLEANUP
-    if sprinklerPatchArgs.parse_args()['sprinklername'] != None and sprinklerPatchArgs.parse_args()['sprinklername'] != '' and scheduleJSON['sprinklers'][sprinklerID]['sprinklername'] != sprinklerPatchArgs.parse_args()['sprinklername']:
-      scheduleJSON['sprinklers'][sprinklerID]['sprinklername'] = sprinklerPatchArgs.parse_args()['sprinklername']
-      sprinklersChanged = True
-    if sprinklerPatchArgs.parse_args()['gallonspermin'] != None and sprinklerPatchArgs.parse_args()['gallonspermin'] != '' and scheduleJSON['sprinklers'][sprinklerID]['gallonspermin'] != sprinklerPatchArgs.parse_args()['gallonspermin']:
-      scheduleJSON['sprinklers'][sprinklerID]['gallonspermin'] = sprinklerPatchArgs.parse_args()['gallonspermin']
-      sprinklersChanged = True
-    if sprinklersChanged:
-      writeScheduleJSON(scheduleJSON, scheduleFile)
-      return scheduleJSON['sprinklers'][sprinklerID], 201
+    if sprinkler_patch_args.parse_args()['sprinklername'] != None and sprinkler_patch_args.parse_args()['sprinklername'] != '' and schedule_json['sprinklers'][sprinkler_id]['sprinklername'] != sprinkler_patch_args.parse_args()['sprinklername']:
+      schedule_json['sprinklers'][sprinkler_id]['sprinklername'] = sprinkler_patch_args.parse_args()['sprinklername']
+      sprinklers_changed = True
+    if sprinkler_patch_args.parse_args()['gallonspermin'] != None and sprinkler_patch_args.parse_args()['gallonspermin'] != '' and schedule_json['sprinklers'][sprinkler_id]['gallonspermin'] != sprinkler_patch_args.parse_args()['gallonspermin']:
+      schedule_json['sprinklers'][sprinkler_id]['gallonspermin'] = sprinkler_patch_args.parse_args()['gallonspermin']
+      sprinklers_changed = True
+    if sprinklers_changed:
+      rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+      return schedule_json['sprinklers'][sprinkler_id], 201
     else:
-      return scheduleJSON['sprinklers'][sprinklerID], 400
+      return schedule_json['sprinklers'][sprinkler_id], 400
     ### CLEANUP
 
-  def delete(self, sprinklerID):
-    scheduleJSON = importSchedule(scheduleFile)
-    checkExistingSprinklerID(sprinklerID, scheduleJSON)
-    del scheduleJSON['sprinklers'][sprinklerID]
-    for sprinkler in scheduleJSON['schedules'].copy():
-      if scheduleJSON['schedules'][sprinkler]['sprinklerid'] == sprinklerID:
-        del scheduleJSON['schedules'][sprinkler]
-    writeScheduleJSON(scheduleJSON, scheduleFile)
+  def delete(self, sprinkler_id):
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    check_existing_sprinkler_id(sprinkler_id, schedule_json)
+    del schedule_json['sprinklers'][sprinkler_id]
+    for sprinkler in schedule_json['schedules'].copy():
+      if schedule_json['schedules'][sprinkler]['sprinklerid'] == sprinkler_id:
+        del schedule_json['schedules'][sprinkler]
+    rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
     return '', 204
 
 class SprinklerGetAll(Resource):
   def get(self):
-    scheduleJSON = importSchedule(scheduleFile)
-    if len(scheduleJSON['sprinklers']) > 0:
-      return (scheduleJSON['sprinklers'], 200)
-    elif len(scheduleJSON['sprinklers']) == 0:
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    if len(schedule_json['sprinklers']) > 0:
+      return (schedule_json['sprinklers'], 200)
+    elif len(schedule_json['sprinklers']) == 0:
       return ('', 404)
 
 class SprinklerGetID(Resource):
   def get(self):
-    scheduleJSON = importSchedule(scheduleFile)
-    return len(scheduleJSON['sprinklers']) + 1, 200
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    return len(schedule_json['sprinklers']) + 1, 200
 
 class ScheduleBuilder(Resource):
-  def get(self, scheduleID):
-    scheduleJSON = importSchedule(scheduleFile)
-    checkExistingScheduleID(scheduleID, scheduleJSON)
-    return scheduleJSON['schedules'][scheduleID], 200
+  def get(self, schedule_id):
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    check_existing_schedule_id(schedule_id, schedule_json)
+    return schedule_json['schedules'][schedule_id], 200
 
-  def put(self, scheduleID):
-    scheduleJSON = importSchedule(scheduleFile)
-    checkExistingSprinklerID(schedulePutArgs.parse_args()['sprinklerid'], scheduleJSON)
-    checkNotExistingSchedule(schedulePutArgs.parse_args(), scheduleID, scheduleJSON)
-    scheduleJSON['schedules'][scheduleID] = schedulePutArgs.parse_args()
-    scheduleJSON['schedules_edited'] = datetime.now().strftime("%a %m/%d %H:%M")
-    writeScheduleJSON(scheduleJSON, scheduleFile)
-    sprinklerStats()
-    return scheduleJSON['schedules'][scheduleID], 201
+  def put(self, schedule_id):
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    check_existing_sprinkler_id(schedule_put_args.parse_args()['sprinklerid'], schedule_json)
+    check_not_existing_schedule(schedule_put_args.parse_args(), schedule_id, schedule_json)
+    schedule_json['schedules'][schedule_id] = schedule_put_args.parse_args()
+    schedule_json['schedules_edited'] = datetime.now().strftime(time_format_dow_mon_day_hour_min)
+    rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+    sprinkler_stats()
+    return schedule_json['schedules'][schedule_id], 201
 
-  def patch(self, scheduleID):
-    scheduleJSON = importSchedule(scheduleFile)
-    checkExistingScheduleID(scheduleID, scheduleJSON)
+  def patch(self, schedule_id):
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    check_existing_schedule_id(schedule_id, schedule_json)
     schedulesChanged = False
     ### CLEANUP
-    if schedulePatchArgs.parse_args()['dow'] != None and schedulePatchArgs.parse_args()['dow'] != '' and scheduleJSON['schedules'][scheduleID]['dow'] != schedulePatchArgs.parse_args()['dow']:
-      scheduleJSON['schedules'][scheduleID]['dow'] = schedulePatchArgs.parse_args()['dow']
+    if schedule_patch_args.parse_args()['dow'] != None and schedule_patch_args.parse_args()['dow'] != '' and schedule_json['schedules'][schedule_id]['dow'] != schedule_patch_args.parse_args()['dow']:
+      schedule_json['schedules'][schedule_id]['dow'] = schedule_patch_args.parse_args()['dow']
       schedulesChanged = True
-    if schedulePatchArgs.parse_args()['starttime'] != None and schedulePatchArgs.parse_args()['starttime'] != '' and scheduleJSON['schedules'][scheduleID]['starttime'] != schedulePatchArgs.parse_args()['starttime']:
-      scheduleJSON['schedules'][scheduleID]['starttime'] = schedulePatchArgs.parse_args()['starttime']
+    if schedule_patch_args.parse_args()['starttime'] != None and schedule_patch_args.parse_args()['starttime'] != '' and schedule_json['schedules'][schedule_id]['starttime'] != schedule_patch_args.parse_args()['starttime']:
+      schedule_json['schedules'][schedule_id]['starttime'] = schedule_patch_args.parse_args()['starttime']
       schedulesChanged = True
-    if schedulePatchArgs.parse_args()['runtime'] != None and schedulePatchArgs.parse_args()['runtime'] != '' and scheduleJSON['schedules'][scheduleID]['runtime'] != schedulePatchArgs.parse_args()['runtime']:
-      scheduleJSON['schedules'][scheduleID]['runtime'] = schedulePatchArgs.parse_args()['runtime']
+    if schedule_patch_args.parse_args()['runtime'] != None and schedule_patch_args.parse_args()['runtime'] != '' and schedule_json['schedules'][schedule_id]['runtime'] != schedule_patch_args.parse_args()['runtime']:
+      schedule_json['schedules'][schedule_id]['runtime'] = schedule_patch_args.parse_args()['runtime']
       schedulesChanged = True
     if schedulesChanged:
-      scheduleJSON['schedules_edited'] = datetime.now().strftime("%a %m/%d %H:%M")
-      writeScheduleJSON(scheduleJSON, scheduleFile)
-      sprinklerStats()
-      return scheduleJSON['schedules'][scheduleID], 201
+      schedule_json['schedules_edited'] = datetime.now().strftime(time_format_dow_mon_day_hour_min)
+      rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+      sprinkler_stats()
+      return schedule_json['schedules'][schedule_id], 201
     else:
-      return scheduleJSON['schedules'][scheduleID], 400
+      return schedule_json['schedules'][schedule_id], 400
     ### CLEANUP
 
-  def delete(self, scheduleID):
-    scheduleJSON = importSchedule(scheduleFile)
-    checkExistingScheduleID(scheduleID, scheduleJSON)
-    del scheduleJSON['schedules'][scheduleID]
-    scheduleJSON['schedules_edited'] = datetime.now().strftime("%a %m/%d %H:%M")
-    writeScheduleJSON(scheduleJSON, scheduleFile)
-    sprinklerStats()
+  def delete(self, schedule_id):
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    check_existing_schedule_id(schedule_id, schedule_json)
+    del schedule_json['schedules'][schedule_id]
+    schedule_json['schedules_edited'] = datetime.now().strftime(time_format_dow_mon_day_hour_min)
+    rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+    sprinkler_stats()
     return '', 204
 
 class ScheduleGetAll(Resource):
   def get(self):
-    scheduleJSON = importSchedule(scheduleFile)
-    if len(scheduleJSON['schedules']) > 0:
-      return (scheduleJSON['schedules'], 200)
-    elif len(scheduleJSON['schedules']) == 0:
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    if len(schedule_json['schedules']) > 0:
+      return (schedule_json['schedules'], 200)
+    elif len(schedule_json['schedules']) == 0:
       return ('', 404)
 
 class ScheduleGetID(Resource):
   def get(self):
-    scheduleJSON = importSchedule(scheduleFile)
-    return len(scheduleJSON['schedules']) + 1, 200
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    return len(schedule_json['schedules']) + 1, 200
 
 class RainDelay(Resource):
   def get(self):
-    scheduleJSON = importSchedule(scheduleFile)
-    return scheduleJSON['raindelay'], 200
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    return schedule_json['raindelay'], 200
 
   def patch(self):
-    scheduleJSON = importSchedule(scheduleFile)
-    scheduleJSON['raindelay']['startdate'] = datetime.now().strftime("%a %m/%d/%y %H:%M")
-    if scheduleJSON['raindelay']['enddate'] == None or datetime.now() >= datetime.strptime(scheduleJSON['raindelay']['enddate'], "%a %m/%d/%y %H:%M"): # None or In the Past
-      scheduleJSON['raindelay']['enddate'] = (datetime.now() + timedelta(days=1)).strftime("%a %m/%d/%y %H:%M") # Schedule rain delay through tomorrow
-    elif datetime.now() < datetime.strptime(scheduleJSON['raindelay']['enddate'], "%a %m/%d/%y %H:%M"):
-      scheduleJSON['raindelay']['enddate'] = (datetime.strptime(scheduleJSON['raindelay']['enddate'], "%a %m/%d/%y %H:%M") + timedelta(days=1)).strftime("%a %m/%d/%y %H:%M") # Existing valid rain delay, increment by 1 day
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    schedule_json['raindelay']['startdate'] = datetime.now().strftime(time_format_dow_mon_day_year_hour_min)
+    if schedule_json['raindelay']['enddate'] == None or datetime.now() >= datetime.strptime(schedule_json['raindelay']['enddate'], time_format_dow_mon_day_year_hour_min): # None or In the Past
+      schedule_json['raindelay']['enddate'] = (datetime.now() + timedelta(days=1)).strftime(time_format_dow_mon_day_year_hour_min) # Schedule rain delay through tomorrow
+    elif datetime.now() < datetime.strptime(schedule_json['raindelay']['enddate'], time_format_dow_mon_day_year_hour_min):
+      schedule_json['raindelay']['enddate'] = (datetime.strptime(schedule_json['raindelay']['enddate'], time_format_dow_mon_day_year_hour_min) + timedelta(days=1)).strftime(time_format_dow_mon_day_year_hour_min) # Existing valid rain delay, increment by 1 day
     else:
-      scheduleJSON['raindelay'] = {
+      schedule_json['raindelay'] = {
                       "enddate": None
                     }
-    writeScheduleJSON(scheduleJSON, scheduleFile)
-    return scheduleJSON['raindelay'], 201
+    rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+    return schedule_json['raindelay'], 201
 
   def delete(self):
-    scheduleJSON = importSchedule(scheduleFile)
-    scheduleJSON['raindelay'] = {
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    schedule_json['raindelay'] = {
                     "startdate": None,
                     "enddate": None
                   }
-    writeScheduleJSON(scheduleJSON, scheduleFile)
+    rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
     return '', 204
 
 class RunAdhoc(Resource):
-  def put(self, sprinklerID):
-    global sprinklingInProgress
-    checkRunningSprinklers(sprinklingInProgress)
-    scheduleJSON = importSchedule(scheduleFile)
-    sprinklerBuilder = SprinklerBuilder()
-    sprinklerInfo, statusCode = sprinklerBuilder.get(sprinklerID)
-    if statusCode == 200:
-      raspiLog.info ('')
-      pushMessage = f'ADHOC WATERING REQUEST STARTED'
-      raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-      if unitTestingMode == False:
-        #if messagingEnabled: sendMatrixMessage(pushMessage, roomid, timeout, True, token)
-        pass
-      adhocSprinklerThread = sprinklerThread(sprinklerID, sprinklerInfo['sprinklername'], runAdhocPutArgs.parse_args()['runtime'])
-      adhocSprinklerThread.start()
-      scheduleJSON['sprinklers'][sprinklerID]['inprogress'] = True
-      scheduleJSON['sprinklers'][sprinklerID]['lastrequest'] = "Adhoc"
-      scheduleJSON['sprinklers'][sprinklerID]['lastrun'] = datetime.now().strftime("%a %m/%d %H:%M")
-      writeScheduleJSON(scheduleJSON, scheduleFile)
-      monitorSprinklerThread = monitorThread(adhocSprinklerThread, "ADHOC", sprinklerID)
-      monitorSprinklerThread.start()
+  def put(self, sprinkler_id):
+    global sprinkle_in_progress
+    check_running_sprinklers(sprinkle_in_progress)
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    sprinkler_builder = SprinklerBuilder()
+    sprinklerInfo, status_code = sprinkler_builder.get(sprinkler_id)
+    if status_code == 200:
+      message = f'ADHOC WATERING REQUEST STARTED'
+      message_out(message)
+      adhoc_sprinkler_thread = sprinklerThread(sprinkler_id, sprinklerInfo['sprinklername'], run_adhoc_put_args.parse_args()['runtime'])
+      adhoc_sprinkler_thread.start()
+      schedule_json['sprinklers'][sprinkler_id]['history'].append(datetime.now().strftime(time_format_dow_mon_day_hour_min))
+      schedule_json['sprinklers'][sprinkler_id]['inprogress'] = True
+      schedule_json['sprinklers'][sprinkler_id]['lastrequest'] = "Adhoc"
+      schedule_json['sprinklers'][sprinkler_id]['lastrun'] = datetime.now().strftime(time_format_dow_mon_day_hour_min)
+      rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+      monitor_sprinkler_thread = monitorThread(adhoc_sprinkler_thread, "ADHOC", sprinkler_id)
+      monitor_sprinkler_thread.start()
       return '', 200
 
 class RunSchedule(Resource):
   def put(self):
-    global sprinklingInProgress
-    checkRunningSprinklers(sprinklingInProgress)
-    scheduleJSON = importSchedule(scheduleFile)
+    global sprinkle_in_progress
+    check_running_sprinklers(sprinkle_in_progress)
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
     scheduleBuilder = ScheduleBuilder()
-    scheduleIDs = runSchedulePutArgs.parse_args()['scheduleids']
-    for scheduleID in scheduleIDs:
-      scheduleInfo = scheduleBuilder.get(scheduleID)
+    schedule_ids = run_schedule_put_args.parse_args()['scheduleids']
+    for schedule_id in schedule_ids:
+      scheduleInfo = scheduleBuilder.get(schedule_id)
       if scheduleInfo[1] != 200:
-        return scheduleIDs, 400
-    sprinklerBuilder = SprinklerBuilder()
-    scheduledSprinklerThreads = []
-    raspiLog.info ('')
-    pushMessage = f'SCHEDULED WATERING REQUEST STARTED'
-    raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-    if scheduleJSON['raindelay']['enddate'] != None and datetime.now() < datetime.strptime(scheduleJSON['raindelay']['enddate'], "%a %m/%d/%y %H:%M"):
-      pushMessage = f'RAIN DELAY UNTIL {scheduleJSON["raindelay"]["enddate"]}'
-      raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-      if unitTestingMode == False and messagingEnabled:
-        sendMatrixMessage(pushMessage, roomid, timeout, True, token)
-      pushMessage = f'SCHEDULED WATERING REQUEST DELAYED'
-      raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
+        return schedule_ids, 400
+    sprinkler_builder = SprinklerBuilder()
+    scheduled_sprinkler_threads = []
+    if schedule_json['raindelay']['enddate'] != None and datetime.now() < datetime.strptime(schedule_json['raindelay']['enddate'], time_format_dow_mon_day_year_hour_min):
+      message = f'RAIN DELAY UNTIL {schedule_json["raindelay"]["enddate"]}'
+      message_out(message)
       return '', 202
-    sprinklerIDs = []
-    for scheduleID in scheduleIDs:
-      scheduleInfo = scheduleBuilder.get(scheduleID)
-      sprinklerID = scheduleInfo[0]['sprinklerid']
-      sprinklerIDs.append(sprinklerID)
-      runTime = scheduleInfo[0]['runtime']
-      sprinklerInfo = sprinklerBuilder.get(sprinklerID)
-      sprinklerName = sprinklerInfo[0]['sprinklername']
+    sprinkler_ids = []
+    for schedule_id in schedule_ids:
+      scheduleInfo = scheduleBuilder.get(schedule_id)
+      sprinkler_id = scheduleInfo[0]['sprinklerid']
+      sprinkler_ids.append(sprinkler_id)
+      run_time = scheduleInfo[0]['runtime']
+      sprinklerInfo = sprinkler_builder.get(sprinkler_id)
+      sprinkler_name = sprinklerInfo[0]['sprinklername']
       if scheduleInfo[1] == 200:
-        scheduledSprinklerThreads.append(sprinklerThread(sprinklerID, sprinklerName, runTime))
-        scheduledSprinklerThreads[-1].name = sprinklerID
-        scheduledSprinklerThreads[-1].start()
-        scheduleJSON['sprinklers'][sprinklerID]['inprogress'] = True
-        scheduleJSON['sprinklers'][sprinklerID]['lastrequest'] = "Scheduled"
-        scheduleJSON['sprinklers'][sprinklerID]['lastrun'] = datetime.now().strftime("%a %m/%d %H:%M")
-        writeScheduleJSON(scheduleJSON, scheduleFile)
-    monitorSprinklerThread = monitorThread(scheduledSprinklerThreads, "SCHEDULED", sprinklerIDs)
-    monitorSprinklerThread.start()
+        scheduled_sprinkler_threads.append(sprinklerThread(sprinkler_id, sprinkler_name, run_time))
+        scheduled_sprinkler_threads[-1].name = sprinkler_id
+        scheduled_sprinkler_threads[-1].start()
+        schedule_json['sprinklers'][sprinkler_id]['history'].append(datetime.now().strftime(time_format_dow_mon_day_hour_min))
+        schedule_json['sprinklers'][sprinkler_id]['inprogress'] = True
+        schedule_json['sprinklers'][sprinkler_id]['lastrequest'] = "Scheduled"
+        schedule_json['sprinklers'][sprinkler_id]['lastrun'] = datetime.now().strftime(time_format_dow_mon_day_hour_min)
+        rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+    monitor_sprinkler_thread = monitorThread(scheduled_sprinkler_threads, "SCHEDULED", sprinkler_ids)
+    monitor_sprinkler_thread.start()
     return '', 200
 
 class StopRunning(Resource):
   def delete(self):
-    global stopRunningRequest
-    stopRunningRequest = True
-    pushMessage = f'INTERRUPTING'
-    raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-    if unitTestingMode == False:
-      if messagingEnabled: sendMatrixMessage(pushMessage, roomid, timeout, True, token)
+    global stop_running_request
+    stop_running_request = True
+    message = f'INTERRUPTING'
+    message_out(message)
     return '', 200
 
 class Config(Resource):
   def get(self):
-    scheduleJSON = importSchedule(scheduleFile)
-    return scheduleJSON, 200
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    return schedule_json, 200
 
 class ResetAll(Resource):
   def delete(self):
-    scheduleJSON = resetSchedule()
-    writeScheduleJSON(scheduleJSON, scheduleFile)
+    schedule_json = rsc.reset_schedule(time_format_dow_mon_day_hour_min)
+    rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
     return '', 204
 
 class Status(Resource):
   def get(self):
-    global sprinklingInProgress
-    if sprinklingInProgress:
-      return 'Running', 200
-    elif sprinklingInProgress == False:
-      return 'Off', 200
+    global sprinkle_in_progress
+    if sprinkle_in_progress:
+      return 'running', 200
+    elif sprinkle_in_progress == False:
+      return 'stopped', 200
+
+class Health(Resource):
+  def get(self):
+    return 'up', 200
 
 class Metrics(Resource):
   def get(self):
-    #scheduleJSON = importSchedule(scheduleFile)
+    #schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
     return 'Coming soon', 200
+
+class NextRun(Resource):
+  def get(self):
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    day_mapping = {
+      "Mon": 0,
+      "Tue": 1,
+      "Wed": 2,
+      "Thu": 3,
+      "Fri": 4,
+      "Sat": 5,
+      "Sun": 6,
+    }
+    now = datetime.now()
+    current_day = now.weekday()
+    next_sprinkler_time = None
+    return '', 200
+    if schedule_json['schedules']:
+      for schedule in schedule_json['schedules'].values():
+        schedule_day = day_mapping[schedule['dow']]
+        start_time = datetime.strptime(schedule['starttime'], time_format_hour_min).time()
+
+        if schedule_day >= current_day:
+          scheduled_datetime = datetime.combine(now.date() + timedelta(days=(schedule_day - current_day)), start_time)
+        else:
+          scheduled_datetime = datetime.combine(now.date() + timedelta(days=(7 - current_day + schedule_day)), start_time)
+
+        if (next_sprinkler_time is None or scheduled_datetime < next_sprinkler_time) and start_time > now.time():
+          next_sprinkler_time = scheduled_datetime
+      return next_sprinkler_time.strftime(time_format_dow_mon_day_hour_min), 200
+
 
 class UnitTesting(Resource):
   def put(self, mode):
-    global unitTestingMode
-    global scheduleFile
+    global unit_testing_mode
+    global schedule_file
     if int(mode) == 1:
-      raspiLog.info ('')
-      raspiLog.info ('%s | ##########################', datetime.now().strftime("%a %m/%d %H:%M"))
-      raspiLog.info ('%s | UNIT TESTING MODE STARTING', datetime.now().strftime("%a %m/%d %H:%M"))
-      unitTestingMode = True
-      scheduleFile = unitTestingPutArgs.parse_args()['filename']
-      #unitTestingFlaskFile = unitTestingPutArgs.parse_args()['flaskfile']
-      #unitTestingLogFile = unitTestingPutArgs.parse_args()['logfile']
+      print(f'{datetime.now().strftime(time_format_dow_mon_day_hour_min)} | ##########################')
+      print(f'{datetime.now().strftime(time_format_dow_mon_day_hour_min)} | UNIT TESTING MODE STARTING')
+      unit_testing_mode = True
+      schedule_file = unit_testing_put_args.parse_args()['filename']
+      #unitTestingFlaskFile = unit_testing_put_args.parse_args()['flaskfile']
+      #unitTestingLogFile = unit_testing_put_args.parse_args()['logfile']
       return 'On', 200
     elif int(mode) == 0:
-      unitTestingMode = False
-      scheduleFile = originalScheduleFile
-      os.remove(unitTestingPutArgs.parse_args()['filename'])
-      raspiLog.info ('')
-      raspiLog.info ('%s | UNIT TESTING MODE COMPLETED', datetime.now().strftime("%a %m/%d %H:%M"))
-      raspiLog.info ('%s | ###########################', datetime.now().strftime("%a %m/%d %H:%M"))
+      unit_testing_mode = False
+      schedule_file = original_schedule_file
+      os.remove(unit_testing_put_args.parse_args()['filename'])
+      print(f'{datetime.now().strftime(time_format_dow_mon_day_hour_min)} | UNIT TESTING MODE COMPLETED')
+      print(f'{datetime.now().strftime(time_format_dow_mon_day_hour_min)} | ###########################')
       return 'Off', 200
 
 class sprinklerThread (threading.Thread):
-  def __init__(self, sprinklerID, sprinklerName, runTime):
+  def __init__(self, sprinkler_id, sprinkler_name, run_time):
     threading.Thread.__init__(self)
-    self.GPIO = customGPIOMapping(parsedArgs.channels, sprinklerID)
-    self.sprinklerRuntime = runTime
-    self.sprinklerName = sprinklerName
+    self.GPIO = gpio_mapping(gpio_channels, sprinkler_id)
+    self.sprinkler_runtime = run_time
+    self.sprinkler_name = sprinkler_name
   def run(self):
-    runSprinkler(self.GPIO, self.sprinklerRuntime, self.sprinklerName)
+    run_sprinkler(self.GPIO, self.sprinkler_runtime, self.sprinkler_name)
 
 class monitorThread (threading.Thread):
-  def __init__(self, threadsToMonitor, sprinklerRequestType, sprinklerIDs):
+  def __init__(self, threads_to_monitor, sprinkler_request_type, sprinkler_ids):
     threading.Thread.__init__(self)
-    self.threadsToMonitor = threadsToMonitor
-    self.sprinklerRequestType = sprinklerRequestType
-    self.sprinklerIDs = sprinklerIDs
+    self.threads_to_monitor = threads_to_monitor
+    self.sprinkler_request_type = sprinkler_request_type
+    self.sprinkler_ids = sprinkler_ids
   def run(self):
-    global sprinklingInProgress
-    scheduleJSON = importSchedule(scheduleFile)
-    if self.sprinklerRequestType == "ADHOC":
-      while self.threadsToMonitor.is_alive():
+    global sprinkle_in_progress
+    schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+    if self.sprinkler_request_type == "ADHOC":
+      while self.threads_to_monitor.is_alive():
         time.sleep(0.1)
-      scheduleJSON['sprinklers'][self.sprinklerIDs]['inprogress'] = False
-      scheduleJSON['sprinklers'][self.sprinklerIDs]['lastrun'] = datetime.now().strftime("%a %m/%d %H:%M")
-      writeScheduleJSON(scheduleJSON, scheduleFile)
-    elif self.sprinklerRequestType == "SCHEDULED":
-      for runningThreads in self.threadsToMonitor:
-        runningThreads.join()
-        scheduleJSON['sprinklers'][runningThreads.name]['inprogress'] = False
-        scheduleJSON['sprinklers'][runningThreads.name]['lastrun'] = datetime.now().strftime("%a %m/%d %H:%M")
-        writeScheduleJSON(scheduleJSON, scheduleFile)
-    pushMessage = f'{self.sprinklerRequestType} WATERING REQUEST COMPLETED'
-    raspiLog.info ('%s | %s', datetime.now().strftime("%a %m/%d/%y %H:%M"), pushMessage)
-    sprinklingInProgress = False
+      schedule_json['sprinklers'][self.sprinkler_ids]['inprogress'] = False
+      schedule_json['sprinklers'][self.sprinkler_ids]['lastrun'] = datetime.now().strftime(time_format_dow_mon_day_hour_min)
+      rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+    elif self.sprinkler_request_type == "SCHEDULED":
+      for running_threads in self.threads_to_monitor:
+        running_threads.join()
+        schedule_json['sprinklers'][running_threads.name]['inprogress'] = False
+        schedule_json['sprinklers'][running_threads.name]['lastrun'] = datetime.now().strftime(time_format_dow_mon_day_hour_min)
+        rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+    sprinkle_in_progress = False
 
-if __name__ == "__main__":
-  # Global Variables
-  stopRunningRequest = False
-  sprinklingInProgress = False
-  unitTestingMode = False
-
-  # Matrix Variables
-  timeout = 10
-  roomid = '!IwbJqjlrJYdTAmYMTh:matrix.delchamps.io'
-  token = 'syt_bm90aWZpZXI_KQflmLjKwCDbKYjMzwRH_4BwUMB'
-
-  # Arg Parser
-  argParser = argparse.ArgumentParser(description="Raspberry Sprinkles API")
-  argParser.add_argument("-c", "--channels", type=int, help="Number of channels on the relay", default=8)
-  argParser.add_argument("-f", "--flog", help="Path to Flask log file", default='/var/log/rs/flask.log')
-  argParser.add_argument("-l", "--rslog", help="Path to Raspberry Sprinkles log file", default='/var/log/rs/raspberry-sprinkles.log')
-  argParser.add_argument("-s", "--schedule", help="Path to schedule file (json)", default='/home/pi/git/raspberry-sprinkles/schedule.json')
-  parsedArgs = argParser.parse_args()
-  originalScheduleFile = scheduleFile = parsedArgs.schedule
-
-  # Request Parser
-  sprinklerPutArgs = reqparse.RequestParser()
-  sprinklerPutArgs.add_argument('sprinklername', type=str, help="Name of sprinkler", location='form', required=True)
-  sprinklerPutArgs.add_argument('gallonspermin', type=int, help="Gallons per minute", location='form')
-  sprinklerPatchArgs = reqparse.RequestParser()
-  sprinklerPatchArgs.add_argument('sprinklername', type=str, help="Name of sprinkler", location='form')
-  sprinklerPatchArgs.add_argument('gallonspermin', type=int, help="Gallons per minute", location='form')
-  schedulePutArgs = reqparse.RequestParser()
-  schedulePutArgs.add_argument('sprinklerid', type=str, help="Name of sprinkler", location='form', required=True)
-  schedulePutArgs.add_argument('dow', type=str, help="Day of Week to run sprinkler", location='form', required=True)
-  schedulePutArgs.add_argument('starttime', type=str, help="Time of day to start sprinkler", location='form', required=True)
-  schedulePutArgs.add_argument('runtime', type=int, help="Runtime of sprinkler", location='form', required=True)
-  schedulePatchArgs = reqparse.RequestParser()
-  schedulePatchArgs.add_argument('dow', type=str, help="Day of Week to run sprinkler", location='form')
-  schedulePatchArgs.add_argument('starttime', type=str, help="Time of day to start sprinkler", location='form')
-  schedulePatchArgs.add_argument('runtime', type=int, help="Runtime of sprinkler", location='form')
-  runAdhocPutArgs = reqparse.RequestParser()
-  runAdhocPutArgs.add_argument('runtime', type=int, help="Runtime of sprinkler", location='form', required=True)
-  runSchedulePutArgs = reqparse.RequestParser()
-  runSchedulePutArgs.add_argument('scheduleids', action='append', help="Sprinkler IDs", location='form', required=True)
-  unitTestingPutArgs = reqparse.RequestParser()
-  unitTestingPutArgs.add_argument('filename', type=str, help="Name of unit testing json file", location='form', required=True)
-
-  # Logging
-  werkzeugLogger = logging.getLogger("werkzeug")
-  werkzeugLogger.setLevel(logging.DEBUG)
-  wLH = logging.FileHandler(parsedArgs.flog)
-  werkzeugLogger.addHandler(wLH)
-  raspiLog = logging.getLogger("raspi")
-  raspiLog.setLevel(logging.INFO)
-  rLH = logging.FileHandler(parsedArgs.rslog)
-  rLH.setFormatter(logging.Formatter('%(message)s'))
-  raspiLog.addHandler(rLH)
-
-  # GPIO
-  if customGPIOMapping(parsedArgs.channels, 1) == None:
-    raspiLog.info ('%s | ERROR - Invalid gpiorelay mapping - ERROR', datetime.now().strftime("%a %m/%d %H:%M"))
-    sys.exit()
-  elif runningOnPi:
-    # Set GPIO Mode
-    GPIO.setwarnings(False)
-    GPIO.setmode(GPIO.BCM)
-
-    # Set GPIO as Output & False/Off
-    raspiLog.info ('')
-    for channel in range(parsedArgs.channels):
-      if channel == 0:
-        continue
-      raspiLog.info('%s | Channel: %s GPIO: %s', datetime.now().strftime("%a %m/%d %H:%M"), channel, customGPIOMapping(parsedArgs.channels, channel))
-      GPIO.setup(customGPIOMapping(parsedArgs.channels, channel), GPIO.OUT)
-      GPIO.output(customGPIOMapping(parsedArgs.channels, channel), False)
-
-  # Begin
-  raspiLog.info ('')
-  raspiLog.info ('%s | STARTING RASPBERRY SPRINKLES API', datetime.now().strftime("%a %m/%d %H:%M"))
-  scheduleJSON = importSchedule(scheduleFile)
-  for sprinkler in scheduleJSON['sprinklers']:
-    if scheduleJSON['sprinklers'][sprinkler]['inprogress']:
-      scheduleJSON['sprinklers'][sprinkler]['inprogress'] = False
-      writeScheduleJSON(scheduleJSON, scheduleFile)
-
+def main():
   # Flask
   app = Flask(__name__)
   CORS(app)
   api = Api(app)
-  api.add_resource(SprinklerBuilder, "/sprinklerbuilder/<sprinklerID>")
+  api.add_resource(SprinklerBuilder, "/sprinklerbuilder/<sprinkler_id>")
   api.add_resource(SprinklerGetAll, "/sprinklergetall")
   api.add_resource(SprinklerGetID, "/sprinklergetid")
-  api.add_resource(ScheduleBuilder, "/schedulebuilder/<scheduleID>")
+  api.add_resource(ScheduleBuilder, "/schedulebuilder/<schedule_id>")
   api.add_resource(ScheduleGetAll, "/schedulegetall")
   api.add_resource(ScheduleGetID, "/schedulegetid")
   api.add_resource(RainDelay, "/raindelay")
-  api.add_resource(RunAdhoc, "/runadhoc/<sprinklerID>")
+  api.add_resource(RunAdhoc, "/runadhoc/<sprinkler_id>")
   api.add_resource(RunSchedule, "/runschedule")
   api.add_resource(StopRunning, "/stoprunning")
   api.add_resource(Config, "/config")
   api.add_resource(ResetAll, "/resetall")
   api.add_resource(Status, "/status")
+  api.add_resource(Health, "/health")
   api.add_resource(Metrics, "/metrics")
+  api.add_resource(NextRun, "/nextrun")
   api.add_resource(UnitTesting, "/unittesting/<mode>")
   app.run(host='0.0.0.0', port=5000)
   #app.run(debug=True)
   #ssl_context='adhoc'
+
+if __name__ == "__main__":
+  # Variables
+  date_format_mon_day_year = "%m/%d/%Y"
+  stop_running_request = False
+  sprinkle_in_progress = False
+  time_format_dow_mon_day_hour_min = "%a %m/%d %H:%M"
+  time_format_dow_mon_day_year_hour_min = "%a %m/%d/%y %H:%M"
+  time_format_hour_min_sec = "%H:%M:%S"
+  time_format_hour_min = "%H:%M"
+  unit_testing_mode = False
+
+  # Import params.json Data
+  params_file = os.path.join(script_dir, 'params.json')
+  params_json = dutils.load_json_file(params_file)
+  if params_json is None:
+    print(f'Unable to import {params_file} data')
+    sys.exit(1)
+
+  # Import Database Connection Data
+  if 'database' in params_json:
+    db_enabled = True
+    db_json = params_json['database']
+    db_columns = db_json['columns']
+    db_connection_info = db_json['connection']
+    db_retries = db_json['retries']
+    db_table = db_json['table']
+  else:
+    db_enabled = False
+    db_columns = None
+    db_connection_info = None
+    db_retries = None
+    db_table = None
+
+  # Import GPIO Data
+  gpio_json = params_json['gpio']
+  gpio_channels = gpio_json['channels']
+
+  # Import Matrix Data
+  if 'matrix' in params_json:
+    matrix_enabled = True
+    matrix_json = params_json['matrix']
+    matrix_room_id = matrix_json['roomid']
+    matrix_token = matrix_json['token']
+  else:
+    matrix_enabled = False
+    matrix_room_id = None
+    matrix_token = None
+
+  # Import Schedule Data
+  original_schedule_file = schedule_file = os.path.join(script_dir, 'schedule.json')
+  schedule_json = rsc.import_schedule(schedule_file, time_format_dow_mon_day_hour_min)
+  if schedule_json is None:
+    print('Unable to import schedule data')
+    sys.exit(1)
+  print(json.dumps(schedule_json, indent=2))
+  if schedule_json['sprinklers']:
+    for sprinkler in schedule_json['sprinklers']:
+      if schedule_json['sprinklers'][sprinkler]['inprogress']:
+        schedule_json['sprinklers'][sprinkler]['inprogress'] = False
+        rsc.write_schedule(schedule_json, schedule_file, time_format_dow_mon_day_hour_min)
+
+  # GPIO
+  if gpio_mapping(gpio_channels, 1) is None:
+    print(f'{datetime.now().strftime(time_format_dow_mon_day_hour_min)} | ERROR - Invalid gpiorelay mapping - ERROR')
+    sys.exit(1)
+  else:
+    # Set GPIO Mode
+    gpio.setwarnings(False)
+    gpio.setmode(gpio.BCM)
+
+    # Set GPIO as Output & False/Off
+    for channel in range(gpio_channels):
+      if channel == 0:
+        continue
+      print(f'{datetime.now().strftime(time_format_dow_mon_day_hour_min)} | Channel: {channel} GPIO: {gpio_mapping(gpio_channels, channel)}')
+      gpio.setup(gpio_mapping(gpio_channels, channel), gpio.OUT)
+      gpio.output(gpio_mapping(gpio_channels, channel), False)
+
+  # Startup
+  startup = {
+    'RELAY_CHANNELS': gpio_channels,
+    'SCHEDULE': schedule_file,
+    'DB_COLUMNS': db_columns,
+    'DB_CONN_INFO': db_connection_info,
+    'DB_RETRIES': db_retries,
+    'DB_TABLE': db_table,
+    'MATRIXROOMID': matrix_room_id,
+    'MATRIXTOKEN': matrix_token
+  }
+
+  print(f'{datetime.now().strftime(time_format_dow_mon_day_hour_min)} | STARTING RASPBERRY SPRINKLES API')
+  for key, value in startup.items():
+    print(f'{datetime.now().strftime(time_format_dow_mon_day_hour_min)} | {key}: {value}')
+
+  # Request Parser
+  sprinkler_put_args = reqparse.RequestParser()
+  sprinkler_put_args.add_argument('sprinklername', type=str, help="Name of sprinkler", location='form', required=True)
+  sprinkler_put_args.add_argument('gallonspermin', type=int, help="Gallons per minute", location='form')
+  sprinkler_patch_args = reqparse.RequestParser()
+  sprinkler_patch_args.add_argument('sprinklername', type=str, help="Name of sprinkler", location='form')
+  sprinkler_patch_args.add_argument('gallonspermin', type=int, help="Gallons per minute", location='form')
+  schedule_put_args = reqparse.RequestParser()
+  schedule_put_args.add_argument('sprinklerid', type=str, help="Name of sprinkler", location='form', required=True)
+  schedule_put_args.add_argument('dow', type=str, help="Day of Week to run sprinkler", location='form', required=True)
+  schedule_put_args.add_argument('starttime', type=str, help="Time of day to start sprinkler", location='form', required=True)
+  schedule_put_args.add_argument('runtime', type=int, help="Runtime of sprinkler", location='form', required=True)
+  schedule_patch_args = reqparse.RequestParser()
+  schedule_patch_args.add_argument('dow', type=str, help="Day of Week to run sprinkler", location='form')
+  schedule_patch_args.add_argument('starttime', type=str, help="Time of day to start sprinkler", location='form')
+  schedule_patch_args.add_argument('runtime', type=int, help="Runtime of sprinkler", location='form')
+  run_adhoc_put_args = reqparse.RequestParser()
+  run_adhoc_put_args.add_argument('runtime', type=int, help="Runtime of sprinkler", location='form', required=True)
+  run_schedule_put_args = reqparse.RequestParser()
+  run_schedule_put_args.add_argument('scheduleids', action='append', help="Sprinkler IDs", location='form', required=True)
+  unit_testing_put_args = reqparse.RequestParser()
+  unit_testing_put_args.add_argument('filename', type=str, help="Name of unit testing json file", location='form', required=True)
+
+  # Call Main Function
+  main()

@@ -1,6 +1,0 @@
-/var/log/rs/flask.log /var/log/rs/raspberry-sprinkles.log {
-        monthly
-        rotate 12
-        copytruncate
-        missingok
-}

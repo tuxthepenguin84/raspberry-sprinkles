@@ -1,0 +1,47 @@
+{
+  "api": {
+    "url": "http://sprinklesapi:5000/"
+  },
+  "database": {
+    "columns": ["date", "time", "sprinkler", "state", "duration"],
+    "connection": {
+      "host": "",
+      "port": "5432",
+      "dbname": "",
+      "user": "",
+      "password": "",
+      "connect_timeout": "2",
+      "sslmode": "require"
+    },
+    "retries": 3,
+    "table": "sprinklers"
+  },
+  "gpio": {
+    "channels": 8
+  },
+  "matrix": {
+    "roomid": "",
+    "token": ""
+  },
+  "rain": {
+    "threshold": 0.15
+  },
+  "uptime": {
+    "delay": 30,
+    "id": ""
+  },
+  "weather": {
+    "api_forecast_url": "https://api.open-meteo.com/v1/forecast",
+    "params": {
+      "latitude": "",
+      "longitude": "",
+      "daily": "rain_sum",
+      "temperature_unit": "fahrenheit",
+      "windspeed_unit": "mph",
+      "precipitation_unit": "inch",
+      "timezone": "America/Los_Angeles",
+      "past_days": "1",
+      "forecast_days": "1"
+    }
+  }
+}
